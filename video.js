@@ -4,36 +4,34 @@ const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const {GoogleAIFileManager,FileState,GoogleAICacheManager,} = require("@google/generative-ai/server");
+const { GoogleAIFileManager, FileState } = require('@google/generative-ai/server');
 
 // Инициализация бота Telegram и Google Generative AI
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN_VIDEO;
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN_VIDEO, { polling: true });
+const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const genAI = new GoogleGenerativeAI(process.env.GENAI);
 const fileManager = new GoogleAIFileManager(process.env.GENAI);
 
-console.log('Бот запущен')
+console.log('Бот запущен');
 
 // Функция загрузки видео, обработки и получения результата
 async function processVideo(videoPath) {
   try {
     // Загружаем видео в Google Generative AI
     const uploadVideoResult = await fileManager.uploadFile(videoPath, { mimeType: "video/mp4" });
-
     let file = await fileManager.getFile(uploadVideoResult.file.name);
-    process.stdout.write("Обрабатываю видео");
-    // Ждем завершения обработки видео
+
+    console.log("Обрабатываю видео");
     while (file.state === FileState.PROCESSING) {
       process.stdout.write(".");
-      await new Promise((resolve) => setTimeout(resolve, 10_000)); // Задержка 10 секунд
+      await new Promise((resolve) => setTimeout(resolve, 10000)); // Задержка 10 секунд
       file = await fileManager.getFile(uploadVideoResult.file.name);
     }
 
     if (file.state === FileState.FAILED) {
       throw new Error("Обработка видео не удалась.");
-    } else {
-      process.stdout.write("\n");
     }
+    process.stdout.write("\n");
 
     const videoPart = {
       fileData: {
@@ -134,22 +132,17 @@ async function processVideo(videoPath) {
     
     ИЗБЕГАЙТЕ СЛИШКОМ СТРОГИХ ИЛИ КРИТИЧЕСКИХ ВЫСКАЗЫВАНИЙ; цель анализа – предоставление конструктивной обратной связи.`;
 
-
-    // Подсчитаем количество токенов, которое будет использовать видео
     const countResult = await model.countTokens([prompt, videoPart]);
     console.log("Количество токенов:", countResult.totalTokens);
 
-    // Генерация контента на основе видео
     const generateResult = await model.generateContent([prompt, videoPart]);
     const response = await generateResult.response;
-
     console.log("Использование токенов:", response.usageMetadata);
 
-    // Получаем текстовый ответ
     const text = await response.text();
     return text;
   } catch (error) {
-    console.error('Ошибка при обработке видео:', error);
+    console.error('Ошибка при обработке видео:', error.response ? error.response.data : error.message);
     throw error;
   }
 }
@@ -157,15 +150,13 @@ async function processVideo(videoPath) {
 // Функция для отправки длинных сообщений частями
 async function sendLongMessage(bot, chatId, message) {
   const maxMessageLength = 4096;
-  // Разбиваем длинное сообщение на части
   const messageParts = [];
   while (message.length > maxMessageLength) {
     messageParts.push(message.slice(0, maxMessageLength));
     message = message.slice(maxMessageLength);
   }
-  messageParts.push(message); // добавляем оставшуюся часть
+  messageParts.push(message);
 
-  // Отправляем каждую часть
   for (let part of messageParts) {
     await bot.sendMessage(chatId, part);
   }
@@ -177,27 +168,22 @@ bot.on('video', async (msg) => {
   const videoFileId = msg.video.file_id;
 
   try {
-    // Получаем файл с Telegram сервера
     const file = await bot.getFile(videoFileId);
     const filePath = file.file_path;
-    const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_TOKEN}/${filePath}`;
+    const fileUrl = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
     const fileName = path.basename(filePath);
     const videoPath = path.join(__dirname, fileName);
 
-    // Скачиваем видео
     const response = await fetch(fileUrl);
     const videoBuffer = await response.buffer();
     fs.writeFileSync(videoPath, videoBuffer);
 
     console.log(`Видео загружено: ${fileName}`);
 
-    // Обрабатываем видео и получаем результат от модели
     const result = await processVideo(videoPath);
 
-    // Отправляем результат пользователю в Telegram частями
     await sendLongMessage(bot, chatId, result);
 
-    // Удаляем видео после обработки
     fs.unlinkSync(videoPath);
   } catch (error) {
     console.error('Ошибка при обработке видео:', error);
